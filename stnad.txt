@@ -1,0 +1,894 @@
+repeat task.wait() until game:IsLoaded()
+repeat task.wait() until game.Players.LocalPlayer
+
+local function clickButton(getButtonFn, timeout)
+    timeout = timeout or 10
+    local t = os.clock()
+    local button
+
+    repeat
+        button = getButtonFn()
+        if button then break end
+        task.wait(.1)
+    until (os.clock() - t) > timeout
+
+    if not button then return false end
+
+    local clicked = pcall(function()
+        if firesignal then
+            firesignal(button.MouseButton1Click)
+        elseif button.MouseButton1Click then
+            for _, conn in pairs(getconnections(button.MouseButton1Click)) do
+                conn:Fire()
+            end
+        end
+    end)
+
+    return clicked
+end
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+
+local PlaceId = game.PlaceId
+
+local startTime = os.clock()
+
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Events = ReplicatedStorage:WaitForChild("Events")
+local TradeEvents = ReplicatedStorage:WaitForChild("TradeEvents")
+
+clickButton(function()
+    local cl = PlayerGui:FindFirstChild("Changelogs")
+    return cl and cl:FindFirstChild("Frame") and cl.Frame:FindFirstChild("TextButton")
+end, 10)
+
+task.wait(.5)
+
+clickButton(function()
+    local menu = PlayerGui:FindFirstChild("MenuGUI")
+    return menu and menu:FindFirstChild("Play")
+end, 10)
+
+task.wait(5)
+
+local StandData = LocalPlayer.Data.Stand
+local AttriData = LocalPlayer.Data.Attri
+
+local Slot1_Stand = LocalPlayer.Data.Slot1Stand
+local Slot1_Attribute = LocalPlayer.Data.Slot1Attri
+
+local Slot2_Stand = LocalPlayer.Data.Slot2Stand
+local Slot2_Attribute = LocalPlayer.Data.Slot2Attri
+
+local Slot3_Stand = LocalPlayer.Data.Slot3Stand
+local Slot3_Attribute = LocalPlayer.Data.Slot3Attri
+
+local Slot4_Stand = LocalPlayer.Data.Slot4Stand
+local Slot4_Attribute = LocalPlayer.Data.Slot4Attri
+
+local Slot5_Stand = LocalPlayer.Data.Slot5Stand
+local Slot5_Attribute = LocalPlayer.Data.Slot5Attri
+
+local SlotOrder = { "Slot1", "Slot2", "Slot3", "Slot4", "Slot5" }
+local SlotRefs = {
+    Slot1 = { Stand = Slot1_Stand, Attribute = Slot1_Attribute },
+    Slot2 = { Stand = Slot2_Stand, Attribute = Slot2_Attribute },
+    Slot3 = { Stand = Slot3_Stand, Attribute = Slot3_Attribute },
+    Slot4 = { Stand = Slot4_Stand, Attribute = Slot4_Attribute },
+    Slot5 = { Stand = Slot5_Stand, Attribute = Slot5_Attribute },
+}
+
+local ServerAge = workspace.Age
+
+local StandNameConvert = ReplicatedStorage.StandNameConvert
+
+local Environment = {
+    SelectStands,
+    SelectAttribute,
+    CurrentLabel,
+    SelectSlot,
+    AutoSaveStand,
+    SelectItemForReroll,
+    AutoRerollStand,
+    AutoHopServer,
+    AutoRejoinWhenKick,
+    AntiAFK,
+    WebhookInput,
+    AutoSendWebhook
+}
+
+local Thred = {
+    AutoSaveStandThred,
+    AutoRerollThred,
+    AutoHopThred,
+    AutoRejoinWhenKick
+}
+
+local Collection = {}; Collection.__index = Collection
+
+local Players_Include = {}
+local Items_Include = {}
+local Attribute_Include = { "None", "Strong", "Tough", "Sloppy", "Powerful", "Manic", "Enrage", "Lethargic", "Godly",
+    "Daemon", "Glass Cannon", "Invincible", "Scourge", "Tragic", "Hacker", "Legendary" }
+table.insert(Attribute_Include, 1, "Any")
+
+
+function Collection:GetBackpack()
+    return LocalPlayer:WaitForChild("Backpack")
+end
+
+function Collection:AddedPlayers()
+    Players_Include = {}
+
+    for i, v in pairs(Players:GetChildren()) do
+        if v ~= LocalPlayer then
+            table.insert(Players_Include, tostring(v))
+        end
+
+        task.wait()
+    end
+end
+
+function Collection:AddedItems()
+    Items_Include = {}
+
+    for i, v in pairs(LocalPlayer.Backpack:GetChildren()) do
+        if v:IsA("Tool") then
+            table.insert(Items_Include, v.Name)
+        end
+
+        task.wait()
+    end
+
+    table.sort(Items_Include)
+    table.insert(Items_Include, 1, "All")
+end
+
+local seen = {}
+local Stand_Include = {}
+
+
+for _, item in ipairs(StandNameConvert:GetChildren()) do
+    if not seen[item.Name] then
+        seen[item.Name] = true
+        table.insert(Stand_Include, item.Name)
+    end
+end
+
+table.sort(Stand_Include)
+table.insert(Stand_Include, 1, "Any")
+
+function Collection:HasStand(Stand)
+    return Environment.SelectStands.Value[Stand] == true
+end
+
+function Collection:HasAttribute(Attribute)
+    return Environment.SelectAttribute.Value[Attribute] == true
+end
+
+function Collection:GetSelectedSlots()
+    local list = {}
+    for _, slotName in ipairs(SlotOrder) do
+        if Environment.SelectSlot.Value[slotName] then
+            table.insert(list, slotName)
+        end
+    end
+    return list
+end
+
+function Collection:SlotIsGood(slotName)
+    local ref = SlotRefs[slotName]
+    if ref.Stand.Value == "None" then return false end
+    local standOK = Collection:HasStand(ref.Stand.Value) or Collection:HasStand("Any")
+    local attriOK = Collection:HasAttribute(ref.Attribute.Value) or Collection:HasAttribute("Any")
+    return standOK and attriOK
+end
+
+function Collection:GetTargetSlot()
+    local selected = Collection:GetSelectedSlots()
+    for _, slotName in ipairs(selected) do
+        if SlotRefs[slotName].Stand.Value == "None" then
+            return slotName
+        end
+    end
+
+    for _, slotName in ipairs(selected) do
+        if not Collection:SlotIsGood(slotName) then
+            return slotName
+        end
+    end
+    return nil
+end
+
+function Collection:AutoSaveStand()
+    local selected = Collection:GetSelectedSlots()
+    if #selected == 0 then
+        Library:Notify("select slot first", 3)
+        Environment.AutoSaveStand:SetValue(false)
+        return
+    end
+
+    while Environment.AutoSaveStand.Value do
+        local allGood = true
+        for _, slotName in ipairs(Collection:GetSelectedSlots()) do
+            if not Collection:SlotIsGood(slotName) then
+                allGood = false
+                break
+            end
+        end
+
+        if allGood then
+            Library:Notify("Out of slot", 5)
+            Environment.AutoSaveStand:SetValue(false)
+            return
+        end
+
+        local standOK = Collection:HasStand(StandData.Value) or Collection:HasStand("Any")
+        local attriOK = Collection:HasAttribute(AttriData.Value) or Collection:HasAttribute("Any")
+
+        if StandData.Value ~= "None" and standOK and attriOK then
+            local target = Collection:GetTargetSlot()
+            if target then
+                local savedStand, savedAttri = StandData.Value, AttriData.Value
+
+                Events.SwitchStand:FireServer(target)
+                local t = os.clock()
+                repeat task.wait() until StandData.Value == "None" or (os.clock() - t) > 8
+
+                Collection:SendWebhook(
+                    "💾 Saved Stand to " .. target,
+                    "Save Stand",
+                    16766720,
+                    {
+                        { name = "Player",    value = '||' .. LocalPlayer.Name .. '||', inline = false },
+                        { name = "Stand",     value = savedStand,                       inline = false },
+                        { name = "Attribute", value = savedAttri,                       inline = false },
+                        { name = "Slot",      value = target,                           inline = false },
+                    }
+                )
+            end
+        end
+
+        task.wait(.3)
+    end
+end
+
+function Collection:SendWebhook(title, description, color, fields)
+    local url = Environment.WebhookInput.Value
+    if not url or url == "" then return end
+    if not Environment.AutoSendWebhook.Value then return end
+
+    local data = {
+        embeds = { {
+            title = title,
+            description = description,
+            color = color,
+            fields = fields,
+            footer = { text = "Stand Upright Auto Reroll | " .. os.date("%d/%m/%Y %I:%M %p") },
+        } }
+    }
+
+    local body = HttpService:JSONEncode(data)
+    local request = http_request or request or (syn and syn.request) or (http and http.request)
+    if not request then return end
+
+    pcall(function()
+        request({
+            Url = url,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = body,
+        })
+    end)
+end
+
+function Collection:UseRerollItem(itemName, conditionFn, isActiveFn)
+    local tool = Collection:GetBackpack():FindFirstChild(itemName)
+    if not (tool and tool:IsA("Tool")) then
+        return false
+    end
+
+    local char = LocalPlayer.Character
+    if not char then return false end
+
+    local ok = pcall(function()
+        tool.Parent = char
+        task.wait(.4)
+        Events.UseItem:FireServer()
+        if tool.Parent then
+            tool.Parent = Collection:GetBackpack()
+        end
+    end)
+
+    if not ok then return false end
+
+    local t = os.clock()
+    repeat
+        task.wait()
+    until conditionFn() or (os.clock() - t) > 8 or (isActiveFn and not isActiveFn())
+
+    return true
+end
+
+function Collection:AutoReroll()
+    if not Environment.SelectItemForReroll.Value then
+        Library:Notify("Select arrow first", 3)
+        Environment.AutoRerollStand:SetValue(false)
+        return
+    end
+
+    local function stillOn() return Environment.AutoRerollStand.Value end
+
+    while stillOn() do
+        local standOK = Collection:HasStand(StandData.Value) or Collection:HasStand("Any")
+        local attriOK = Collection:HasAttribute(AttriData.Value) or Collection:HasAttribute("Any")
+
+        if StandData.Value ~= "None" and standOK and attriOK then
+            if not Environment.AutoSaveStand.Value then
+                Collection:SendWebhook(
+                    "Got Stand: " .. StandData.Value,
+                    "**Desired stand acquired!** Keeping it.",
+                    65280,
+                    {
+                        { name = "Player",    value = '||' .. LocalPlayer.Name .. '||', inline = false },
+                        { name = "Stand",     value = StandData.Value,                  inline = false },
+                        { name = "Attribute", value = AttriData.Value,                  inline = false },
+                    }
+                )
+
+                Library:Notify("Found: " .. StandData.Value .. " (" .. AttriData.Value .. ")", 5)
+                Environment.AutoRerollStand:SetValue(false)
+                return
+            end
+            task.wait(.2)
+        elseif StandData.Value == "None" then
+            local itemName = Environment.SelectItemForReroll.Value
+            local used = Collection:UseRerollItem(itemName, function()
+                return StandData.Value ~= "None"
+            end, stillOn)
+            if not used then
+                Library:Notify("Out of " .. tostring(itemName) .. ", stopped", 5)
+                Environment.AutoRerollStand:SetValue(false)
+                return
+            end
+        else
+            local oldStand, oldAttri = StandData.Value, AttriData.Value
+            local used = Collection:UseRerollItem("Rokakaka", function()
+                return StandData.Value ~= oldStand or AttriData.Value ~= oldAttri
+            end, stillOn)
+            if not used then
+                Library:Notify("Out of Rokakaka, stopped", 5)
+                Environment.AutoRerollStand:SetValue(false)
+                return
+            end
+        end
+        task.wait(0.35)
+    end
+end
+
+function Collection:HopServer()
+    local servers = {}
+    local req = game:HttpGet("https://games.roblox.com/v1/games/" ..
+        PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
+    local body = HttpService:JSONDecode(req)
+
+    if body and body.data then
+        for i, v in next, body.data do
+            if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
+                table.insert(servers, 1, v.id)
+            end
+        end
+    end
+
+    if #servers > 0 then
+        TeleportService:TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], Players.LocalPlayer)
+    else
+        return notify("Serverhop", "Couldn't find a server.")
+    end
+end
+
+function Collection:AutoHopServer()
+    while Environment.AutoHopServer.Value do
+        ServerTime = ServerAge.Value
+        if ServerTime >= 10800 then
+            Collection:HopServer()
+        end
+        task.wait(1)
+    end
+end
+
+function Collection:AutoRejoinKick()
+    if Collection.RejoinConnection then return end
+
+    Collection.RejoinConnection = game:GetService("CoreGui").RobloxPromptGui.promptOverlay.ChildAdded:Connect(function(
+        Kick)
+        if not Environment.AutoRejoinWhenKick.Value then return end
+        if Kick.Name == 'ErrorPrompt' and Kick:FindFirstChild('MessageArea') and Kick.MessageArea:FindFirstChild("ErrorFrame") then
+            TeleportService:Teleport(PlaceId)
+        end
+    end)
+end
+
+function Collection:StopRejoinKick()
+    if Collection.RejoinConnection then
+        Collection.RejoinConnection:Disconnect()
+        Collection.RejoinConnection = nil
+    end
+end
+
+function Collection:AntiAFK()
+    if Collection.AntiAFKConnection then
+        return
+    end
+
+    Collection.AntiAFKConnection = LocalPlayer.Idled:Connect(function()
+        if Environment.AntiAFK.Value then
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end
+    end)
+end
+
+function Collection:StopAntiAFK()
+    if Collection.AntiAFKConnection then
+        Collection.AntiAFKConnection:Disconnect()
+        Collection.AntiAFKConnection = nil
+    end
+end
+
+function Collection:DisconnectAll()
+    if Thred.AutoSaveStandThred then
+        task.cancel(Thred.AutoSaveStandThred); Thred.AutoSaveStandThred = nil
+    end
+    if Thred.AutoRerollThred then
+        task.cancel(Thred.AutoRerollThred); Thred.AutoRerollThred = nil
+    end
+    if Thred.AutoHopThred then
+        task.cancel(Thred.AutoHopThred); Thred.AutoHopThred = nil
+    end
+    Collection:StopRejoinKick()
+    Collection:StopAntiAFK()
+    Environment.AutoSaveStand = false
+    Environment.AutoRerollStand = false
+end
+
+Collection:AddedItems()
+Collection:AddedPlayers()
+
+-- \\ Ui // --
+
+local repo = 'https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/'
+
+local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
+local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
+local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
+
+local Window = Library:CreateWindow({
+    Title = 'Stand Upright: Rebooted',
+    Center = true,
+    AutoShow = true,
+    TabPadding = 8,
+    MenuFadeTime = 0
+})
+
+local Tabs = {
+    Main = Window:AddTab('Main'),
+    ['UI Settings'] = Window:AddTab('UI Settings'),
+}
+
+-- \\ GroupBox // --
+
+local TradingGroupBox = Tabs.Main:AddLeftGroupbox('Trade helper ⚖️')
+local MiscTabbox = Tabs.Main:AddLeftTabbox()
+local UserGroupBox = Tabs.Main:AddRightGroupbox('User 👤')
+local StandGroupBox = Tabs.Main:AddRightGroupbox('Stand reroll 🗿')
+local ServerGroupBox = Tabs['UI Settings']:AddRightGroupbox('Server 🌐')
+
+-- \\ Trade helper // --
+
+local SelectTradingPlayers = TradingGroupBox:AddDropdown('MyDropdown', {
+    Values = Players_Include,
+    Default = 1,
+    Multi = false,
+
+    Text = 'Select player',
+    Tooltip = 'Select player for trade',
+
+    Callback = function(Value) end
+})
+
+Options.MyDropdown:OnChanged(function() end)
+
+local SendTrade = TradingGroupBox:AddButton({
+    Text = 'Send',
+    Func = function()
+        Events.UICMDS:FireServer(SelectTradingPlayers.Value, "Trade")
+    end,
+    DoubleClick = false,
+    Tooltip = 'This is the main button'
+})
+
+local RefreshPlayers = SendTrade:AddButton({
+    Text = 'Refresh',
+    Func = function()
+        Collection:AddedPlayers()
+        Options.MyDropdown:SetValues(Players_Include)
+    end,
+    DoubleClick = false,
+})
+
+TradingGroupBox:AddDivider()
+
+
+local SelectTradingItems = TradingGroupBox:AddDropdown('TradingItemDropDown', {
+
+    Values = Items_Include,
+    Default = 1,
+    Multi = true,
+
+    Text = 'Select items',
+
+    Callback = function(Value)
+    end
+})
+
+Options.TradingItemDropDown:OnChanged(function() end)
+
+local AmountItems = TradingGroupBox:AddInput('AmountItemsTextBox', {
+    Default = nil,
+    Numeric = true,
+    Finished = false,
+
+    Text = 'Amount Items',
+
+    Placeholder = 1,
+
+    Callback = function(Value) end
+})
+
+Options.AmountItemsTextBox:OnChanged(function() end)
+
+local AddedItems = TradingGroupBox:AddButton({
+    Text = 'Add items',
+    Func = function()
+        if SelectTradingItems.Value["All"] then
+            for _, itemName in ipairs(Items_Include) do
+                if itemName ~= "All" then
+                    TradeEvents.TradeComm:FireServer("AddItem",
+                        { ItemName = itemName, Amount = tonumber(AmountItems.Value) })
+                    task.wait()
+                end
+            end
+        else
+            for itemName, isSelected in pairs(SelectTradingItems.Value) do
+                if isSelected then
+                    TradeEvents.TradeComm:FireServer("AddItem",
+                        { ItemName = itemName, Amount = tonumber(AmountItems.Value) })
+                    task.wait()
+                end
+            end
+        end
+
+        task.wait()
+        TradeEvents.TradeComm:FireServer("AcceptTrade")
+    end,
+    DoubleClick = false,
+})
+
+local RefreshItems = AddedItems:AddButton({
+    Text = 'Refresh',
+    Func = function()
+        Collection:AddedItems()
+        Options.TradingItemDropDown:SetValues(Items_Include)
+    end,
+    DoubleClick = false,
+})
+
+-- \\ Stand reroll // --
+
+Environment.CurrentLabel = UserGroupBox:AddLabel('Current: N/A')
+UserGroupBox:AddDivider()
+
+local SlotLabels = {}
+for _, slotName in ipairs(SlotOrder) do
+    SlotLabels[slotName] = UserGroupBox:AddLabel(slotName .. ': N/A')
+end
+
+local function updateCurrentLabel()
+    pcall(function()
+        if Environment.CurrentLabel then
+            Environment.CurrentLabel:SetText('Current: ' .. StandData.Value .. ' (' .. AttriData.Value .. ')')
+        end
+    end)
+end
+
+local function updateSlotLabel(slotName)
+    pcall(function()
+        if SlotLabels[slotName] then
+            local ref = SlotRefs[slotName]
+            SlotLabels[slotName]:SetText(slotName .. ': ' .. ref.Stand.Value .. ' (' .. ref.Attribute.Value .. ')')
+        end
+    end)
+end
+
+StandData:GetPropertyChangedSignal("Value"):Connect(updateCurrentLabel)
+AttriData:GetPropertyChangedSignal("Value"):Connect(updateCurrentLabel)
+updateCurrentLabel()
+
+for _, slotName in ipairs(SlotOrder) do
+    local ref = SlotRefs[slotName]
+    ref.Stand:GetPropertyChangedSignal("Value"):Connect(function() updateSlotLabel(slotName) end)
+    ref.Attribute:GetPropertyChangedSignal("Value"):Connect(function() updateSlotLabel(slotName) end)
+    updateSlotLabel(slotName)
+end
+
+UserGroupBox:AddDivider()
+
+UserGroupBox:AddLabel('Slot')
+
+Environment.SelectSlot = UserGroupBox:AddDropdown('Selectslot', {
+
+    Values = { "Slot1", "Slot2", "Slot3", "Slot4", "Slot5" },
+    Default = 1,
+    Multi = true,
+
+    Text = 'Select slot for save stand',
+
+    Callback = function(Value)
+    end
+})
+
+Options.Selectslot:OnChanged(function() end)
+
+
+Environment.AutoSaveStand = UserGroupBox:AddToggle('AutoSaveStand', {
+    Text = 'Auto Save Stands',
+    Default = false,
+    Tooltip = 'Automatic save stands to selected slot ( will save on none first then save to selected slot )',
+
+    Callback = function(Value) end
+})
+
+Toggles.AutoSaveStand:OnChanged(function(value)
+    if Thred.AutoSaveStandThred then
+        task.cancel(Thred.AutoSaveStandThred)
+        Thred.AutoSaveStandThred = nil
+    end
+
+    if value then
+        Thred.AutoSaveStandThred = task.spawn(function()
+            Collection:AutoSaveStand()
+        end)
+    end
+end)
+
+local OpenStandStorage = UserGroupBox:AddButton({
+    Text = 'Open Storage',
+    Func = function()
+        workspace:WaitForChild("Map"):WaitForChild("NPCs"):WaitForChild("admpn"):WaitForChild("Done"):FireServer()
+    end,
+    DoubleClick = false,
+})
+
+-- \\ Stand reroll // --
+
+Environment.SelectStands = StandGroupBox:AddDropdown('SelectStands', {
+
+    Values = Stand_Include,
+    Default = {},
+    Multi = true,
+
+    Text = 'Select stands',
+
+    Callback = function(Value)
+    end
+})
+
+Options.SelectStands:OnChanged(function() end)
+
+Environment.SelectAttribute = StandGroupBox:AddDropdown('SelectAttribute', {
+
+    Values = Attribute_Include,
+    Default = {},
+    Multi = true,
+
+    Text = 'Select attributes',
+
+    Callback = function(Value) end
+})
+
+Options.SelectAttribute:OnChanged(function() end)
+
+Environment.SelectItemForReroll = StandGroupBox:AddDropdown('SelectItemForReroll', {
+
+    Values = { "Stand Arrow", "Charged Arrow" },
+    Default = 1,
+    Multi = false,
+
+    Text = 'Select arrow',
+
+    Callback = function(Value)
+    end
+})
+
+Options.SelectItemForReroll:OnChanged(function() end)
+
+
+
+Environment.AutoRerollStand = StandGroupBox:AddToggle('AutoRerollStand', {
+    Text = 'Auto Reroll Stand',
+    Default = false,
+    Tooltip = 'Automatic reroll stand until found desired stand and attribute',
+
+    Callback = function(Value) end
+})
+
+Toggles.AutoRerollStand:OnChanged(function(value)
+    if Thred.AutoRerollThred then
+        task.cancel(Thred.AutoRerollThred)
+        Thred.AutoRerollThred = nil
+    end
+
+    if value then
+        Thred.AutoRerollThred = task.spawn(function()
+            Collection:AutoReroll()
+        end)
+    end
+end)
+
+
+-- \\ Miscellaneous // --
+
+local MiscTab = MiscTabbox:AddTab('Misc')
+
+MiscTab:AddButton({
+    Text = 'Rollback ⛓️‍💥',
+    Func = function()
+        local data = {
+            {
+                skipItemPromptSetting = false,
+                lowFXModeSetting = "\xFF",
+                blurToggle = true,
+                toggleTradingSetting = true,
+                markerToggle = false,
+                experimentalMousePointerSetting = false,
+                musicToggle = true,
+                toggleInventorySetting = true,
+                newItemIconSetting = true
+            }
+        }
+
+        Events.loadClientSettings:FireServer(unpack(data))
+
+        task.wait()
+
+        Library:Notify("Rollback success", 5)
+    end,
+    DoubleClick = false,
+    Tooltip = 'This is the main button'
+})
+
+MiscTab:AddButton({
+    Text = 'Rejoin 🔄',
+    Func = function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end,
+    DoubleClick = false,
+    Tooltip = 'This is the main button'
+})
+
+-- \\ WebhookGroupBox //
+
+local WebhookTab = MiscTabbox:AddTab('Webhook')
+
+Environment.WebhookInput = WebhookTab:AddInput('WebhookInput', { Default = '', Numeric = false, Finished = false, Text = 'Webhook', Placeholder = '', Callback = function(Value) end })
+
+Environment.AutoSendWebhook = WebhookTab:AddToggle('AutoSendWebhook', {
+    Text = 'Webhook',
+    Default = false,
+    Tooltip = 'Send webhook when reroll stand',
+
+    Callback = function(Value) end
+})
+
+Toggles.AutoSendWebhook:OnChanged(function(value)
+
+end)
+
+-- \\ Ui settings //
+
+Environment.AntiAFK = ServerGroupBox:AddToggle('AntiAFK', {
+    Text = 'Anti AFK',
+    Default = true,
+    Tooltip = 'This function will make u dont get kicked for being AFK',
+
+    Callback = function(Value) end
+})
+
+Toggles.AntiAFK:OnChanged(function(value)
+    if value then
+        Collection:AntiAFK()
+    else
+        Collection:StopAntiAFK()
+    end
+end)
+
+Environment.AutoHopServer = ServerGroupBox:AddToggle('AutoHopServer', {
+    Text = 'Auto Hop Server',
+    Default = false,
+    Tooltip = 'This function will automatically hop server when server age have 3 hrs +',
+
+    Callback = function(Value) end
+})
+
+Toggles.AutoHopServer:OnChanged(function(value)
+    if Thred.AutoHopThred then
+        task.cancel(Thred.AutoHopThred)
+        Thred.AutoHopThred = nil
+    end
+
+    if value then
+        Thred.AutoHopThred = task.spawn(function()
+            Collection:AutoHopServer()
+        end)
+    end
+end)
+
+Environment.AutoRejoinWhenKick = ServerGroupBox:AddToggle('AutoRejoinWhenKick', {
+    Text = 'Auto Rejoin When Get Kick',
+    Default = true,
+    Tooltip = 'This function will automatically rejoin server when u get kick',
+
+    Callback = function(Value) end
+})
+
+Toggles.AutoRejoinWhenKick:OnChanged(function(value)
+    if value then
+        Collection:AutoRejoinKick()
+    else
+        Collection:StopRejoinKick()
+    end
+end)
+
+Library.KeybindFrame.Visible = true; -- todo: add a function for this
+
+Library:OnUnload(function()
+    print('Unloaded!')
+    Collection:DisconnectAll()
+    Library.Unloaded = true
+end)
+
+-- UI Settings
+local MenuGroup = Tabs['UI Settings']:AddLeftGroupbox('Menu')
+
+MenuGroup:AddButton('Unload', function() Library:Unload() end)
+MenuGroup:AddLabel('Menu bind'):AddKeyPicker('MenuKeybind', { Default = 'L', NoUI = false, Text = 'Menu keybind' })
+
+Library.ToggleKeybind = Options.MenuKeybind
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+
+SaveManager:IgnoreThemeSettings()
+
+SaveManager:SetIgnoreIndexes({ 'MenuKeybind' })
+
+ThemeManager:SetFolder('MyScriptHub')
+SaveManager:SetFolder('MyScriptHub/specific-game')
+
+SaveManager:BuildConfigSection(Tabs['UI Settings'])
+
+ThemeManager:ApplyToTab(Tabs['UI Settings'])
+
+SaveManager:LoadAutoloadConfig()
+
+local elapsed = (os.clock() - startTime)
+
+Library:Notify("Script loaded success in " .. string.format("%.2f s", elapsed), 5)

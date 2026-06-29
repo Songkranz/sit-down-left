@@ -407,13 +407,22 @@ end
 function Collection:AutoRejoinKick()
     if Collection.RejoinConnection then return end
 
-    Collection.RejoinConnection = game:GetService("CoreGui").RobloxPromptGui.promptOverlay.ChildAdded:Connect(function(
-        Kick)
+    local promptOverlay = game:GetService("CoreGui").RobloxPromptGui.promptOverlay
+
+    local function checkPrompt(Kick)
         if not Environment.AutoRejoinWhenKick.Value then return end
-        if Kick.Name == 'ErrorPrompt' and Kick:FindFirstChild('MessageArea') and Kick.MessageArea:FindFirstChild("ErrorFrame") then
+        if Kick.Name == 'ErrorPrompt'
+            and Kick:FindFirstChild('MessageArea')
+            and Kick.MessageArea:FindFirstChild("ErrorFrame") then
             TeleportService:Teleport(PlaceId)
         end
-    end)
+    end
+
+    for _, Kick in ipairs(promptOverlay:GetChildren()) do
+        task.spawn(checkPrompt, Kick)
+    end
+
+    Collection.RejoinConnection = promptOverlay.ChildAdded:Connect(checkPrompt)
 end
 
 function Collection:StopRejoinKick()
